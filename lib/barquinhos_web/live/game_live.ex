@@ -4,13 +4,25 @@ defmodule BarquinhosWeb.GameLive do
 
   def mount(_params, _session, socket) do
     BarquinhosWeb.Endpoint.subscribe("battleship")
+
+    socket = player(socket)
+
+    if connected?(socket) do
+
+      BarquinhosWeb.Endpoint.broadcast("battleship", "new_player", %{
+        "player" => socket.assigns.player
+      })
+    end
+
+    socket = players(socket)
+
     {:ok, socket |> build}
   end
 
   def build(socket) do
     socket
-    |> player()
     |> ships()
+    |> players()
     |> board()
     |> points()
     |> shots()
@@ -26,6 +38,10 @@ defmodule BarquinhosWeb.GameLive do
 
   defp ships(socket) do
     assign(socket, ships: [])
+  end
+
+  defp players(socket) do
+    assign(socket, players: %{})
   end
 
   defp points(socket) do
@@ -81,6 +97,10 @@ defmodule BarquinhosWeb.GameLive do
   defp game_status(socket, status), do: assign(socket, game_status: status)
 
   defp game_status(%{assigns: %{ships: ships}} = socket) when length(ships) == 5 do
+    BarquinhosWeb.Endpoint.broadcast("battleship", "board_ready", %{
+      "player" => socket.assigns.player
+    })
+
     assign(socket, game_status: :ready, shots: [{2, 7}])
   end
 
@@ -105,8 +125,14 @@ defmodule BarquinhosWeb.GameLive do
   end
 
   def handle_event("add_shot", %{"x" => x, "y" => y}, socket) do
-    BarquinhosWeb.Endpoint.broadcast("battleship", "shot_fired", %{ "player" => socket.assigns.player, "x" => x, "y" => y})
-    {:noreply, assign(socket,shots: [{String.to_integer(x), String.to_integer(y)}|socket.assigns.shots])}
+    BarquinhosWeb.Endpoint.broadcast("battleship", "shot_fired", %{
+      "player" => socket.assigns.player,
+      "x" => x,
+      "y" => y
+    })
+
+    {:noreply,
+     assign(socket, shots: [{String.to_integer(x), String.to_integer(y)} | socket.assigns.shots])}
   end
 
   def handle_event("ship_type", %{"type" => ship}, socket) do
@@ -117,14 +143,47 @@ defmodule BarquinhosWeb.GameLive do
     {:noreply, socket |> ship_orientation(String.to_atom(ship))}
   end
 
-  def handle_info(%Phoenix.Socket.Broadcast{event: "shot_fired", payload: %{"player" => player, "x" => x, "y" => y}, topic: "battleship"}, socket) do
+  def handle_info(
+        %Phoenix.Socket.Broadcast{
+          event: "shot_fired",
+          payload: %{"player" => player, "x" => x, "y" => y},
+          topic: "battleship"
+        },
+        socket
+      ) do
     IO.puts("shots fired!")
+
     if player.id != socket.assigns.player.id do
-      {:noreply, assign(socket,shots_received: [{String.to_integer(x), String.to_integer(y)}|socket.assigns.shots_received])}
+      {:noreply,
+       assign(socket,
+         shots_received: [
+           {String.to_integer(x), String.to_integer(y)} | socket.assigns.shots_received
+         ]
+       )}
     else
       {:noreply, socket}
     end
   end
+
+  def handle_info(
+        %Phoenix.Socket.Broadcast{
+          event: "new_player",
+          payload: %{"player" => player},
+          topic: "battleship"
+        },
+        socket
+      ) do
+
+    IO.inspect (list(socket))
+
+
+    {:noreply,
+     assign(socket,
+       players: MapSet.put(MapSet.new(socket.assigns.players), player)
+     )}
+  end
+
+  def list(%Phoenix.Socket{topic: topic}), do: list(topic)
 
   defp already_on_board?(ships, type) do
     ships
@@ -138,5 +197,4 @@ defmodule BarquinhosWeb.GameLive do
   defp shot_class(shots, {x, y}) do
     if {x, y} in shots, do: "shot"
   end
-
 end
